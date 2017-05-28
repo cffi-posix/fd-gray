@@ -56,7 +56,7 @@ to read from or write to a closed fd gray stream."))
 (defclass input-stream (stream fundamental-binary-input-stream)
   ((input-buffer :initform (cffi:foreign-alloc :unsigned-char
 					       :count *buffer-size*)
-		 :reader input-buffer)
+		 :accessor input-buffer)
    (input-index :initform 0
 		:accessor input-index
 		:type fixnum+)
@@ -133,7 +133,7 @@ Tries to read once from input-length to input-max (end of buffer)."
 (defclass output-stream (stream fundamental-binary-output-stream)
   ((output-buffer :initform (cffi:foreign-alloc :unsigned-char
 						:count *buffer-size*)
-		  :reader output-buffer)
+		  :accessor output-buffer)
    (output-index :initform 0
 		 :accessor output-index
 		 :type fixnum+)
