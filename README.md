@@ -1,7 +1,7 @@
 # fd-gray
 
-Unix file descriptor gray streams are binary gray streams operating
-on `(unsigned-byte 8)` data using `unistd:read`, `unistd:write` and
+fd-gray streams are binary gray streams operating on
+`(unsigned-byte 8)` data using `unistd:read`, `unistd:write` and
 `unistd:close` to embed Unix file descriptors in standard Common Lisp
 streams.
 
