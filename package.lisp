@@ -27,7 +27,13 @@
    #:stream-error)
   (:export
    #:stream
-   #:with-stream
-   #:stream-error
+   #:input-stream
+   #:with-input-stream
    #:stream-input
-   #:stream-output))
+   #:output-stream
+   #:with-output-stream
+   #:stream-output
+   #:io-stream
+   #:with-io-stream
+   #:stream-error
+   #:stream-closed-error))

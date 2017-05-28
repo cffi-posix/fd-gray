@@ -42,6 +42,8 @@ fd gray streams."))
   (:documentation "An error that is signalled when someone is trying
 to read from or write to a closed fd gray stream."))
 
+(defgeneric check-if-open (stream))
+
 (defmethod check-if-open ((stream stream))
   "Checks if STREAM is open and signals an error otherwise."
   (unless (open-stream-p stream)
@@ -74,6 +76,8 @@ to read from or write to a closed fd gray stream."))
                      (stream-error-stream condition))))
   (:documentation "An error that is signalled when an input error happens
 on a fd gray stream."))
+
+(defgeneric stream-input (stream))
 
 (defmethod stream-input ((stream input-stream))
   "Fill buffer with file data.
@@ -130,6 +134,16 @@ Tries to read once from input-length to input-max (end of buffer)."
   (setf (input-buffer stream) nil)
   (unistd:close (stream-fd stream)))
 
+(defun input-stream (fd)
+  (make-instance 'input-stream :fd fd))
+
+(defmacro with-input-stream ((var fd) &body body)
+  (let ((stream (gensym "STREAM-")))
+    `(let ((,stream (input-stream ,fd)))
+       (unwind-protect (let ((,var ,stream))
+			 ,@body)
+	 (close ,stream)))))
+
 (defclass output-stream (stream fundamental-binary-output-stream)
   ((output-buffer :initform (cffi:foreign-alloc :unsigned-char
 						:count *buffer-size*)
@@ -143,6 +157,8 @@ Tries to read once from input-length to input-max (end of buffer)."
    (output-max :initform *buffer-size*
 	       :reader output-max
 	       :type fixnum+)))
+
+(defgeneric stream-output (stream))
 
 (defmethod stream-output ((stream output-stream))
   "Send buffer data to the file.
@@ -198,6 +214,16 @@ Calls write with data ranging from output-index to output-length."
   (setf (output-buffer stream) nil)
   (unistd:close (stream-fd stream)))
 
+(defun output-stream (fd)
+  (make-instance 'output-stream :fd fd))
+
+(defmacro with-output-stream ((var fd) &body body)
+  (let ((stream (gensym "STREAM-")))
+    `(let ((,stream (output-stream ,fd)))
+       (unwind-protect (let ((,var ,stream))
+			 ,@body)
+	 (close ,stream)))))
+
 (defclass io-stream (input-stream output-stream)
   ())
 
@@ -210,10 +236,12 @@ Calls write with data ranging from output-index to output-length."
   (setf (output-buffer stream) nil)
   (unistd:close (stream-fd stream)))
 
-(defun make-stream (fd)
+(defun io-stream (fd)
   (make-instance 'io-stream :fd fd))
 
-(defmacro with-stream ((var fd) &body body)
-  `(let ((,var (make-stream ,fd)))
-     (unwind-protect (progn ,@body)
-       (close ,var))))
+(defmacro with-io-stream ((var fd) &body body)
+  (let ((stream (gensym "STREAM-")))
+    `(let ((,stream (io-stream ,fd)))
+       (unwind-protect (let ((,var ,stream))
+			 ,@body)
+	 (close ,stream)))))
