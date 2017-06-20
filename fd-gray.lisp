@@ -27,7 +27,35 @@
 (defclass stream (trivial-gray-stream-mixin)
   ((fd :initarg :fd
        :reader stream-fd
-       :type file-descriptor)))
+       :type file-descriptor)
+   (blocking :initarg :blocking
+	     :accessor stream-blocking%
+	     :type boolean)))
+
+(defgeneric stream-blocking (stream))
+
+(defmethod stream-blocking ((stream stream))
+  (or (and (slot-boundp stream 'blocking)
+	   (slot-value stream 'blocking))
+      (setf (slot-value stream 'blocking)
+	    (let ((flags (fcntl:getfl (stream-fd stream))))
+	      (not (= 0 (logand fcntl:+o-nonblock+ flags)))))))
+
+(defgeneric (setf stream-blocking) (value stream))
+
+(defmethod (setf stream-blocking) (value (stream stream))
+  (let* ((fd (stream-fd stream))
+	 (flags (fcntl:getfl fd)))
+    (cond
+      ((and value (not (= 0 (logand fcntl:+o-nonblock+ flags))))
+       t)
+      ((and (not value) (= 0 (logand fcntl:+o-nonblock+ flags)))
+       nil)
+      (t
+       (fcntl:setfl fd (if value
+			   (logand (lognot fcntl:+o-nonblock+) flags)
+			   (logior fcntl:+o-nonblock+ flags)))
+       (setf (slot-value stream 'blocking) value)))))
 
 (define-condition stream-error (cl:stream-error)
   ()
@@ -84,10 +112,15 @@ on a fd gray stream."))
 Tries to read once from input-length to input-max (end of buffer)."
   (let* ((buffer (input-buffer stream))
 	 (length (input-length stream))
-	 (r (unistd:read (stream-fd stream)
-			 (cffi:mem-aptr buffer :unsigned-char length)
-			 (- (input-max stream) length))))
-    (cond ((= r 0)
+	 (fd (stream-fd stream))
+	 (buf (cffi:mem-aptr buffer :unsigned-char length))
+	 (buflen (- (input-max stream) length))
+	 (r (if (stream-blocking stream)
+		(unistd:read fd buf buflen)
+		(unistd:read-non-blocking fd buf buflen))))
+    (cond ((null r)
+	   nil)
+	  ((= r 0)
 	   :eof)
 	  ((< r 0)
 	   (error 'stream-input-error :stream stream))
@@ -102,8 +135,9 @@ Tries to read once from input-length to input-max (end of buffer)."
       (when (= input-index (input-length stream))
 	(setf input-index 0
 	      (input-length stream) 0)
-	(when (eq :eof (stream-input stream))
-	  (return-from stream-read-byte :eof)))
+	(case (stream-input stream)
+	  ((:eof) (return-from stream-read-byte :eof))
+	  ((nil) (return-from stream-read-byte nil))))
       (let ((b (cffi:mem-aref buffer :unsigned-char input-index)))
 	(incf input-index)
 	b))))
@@ -126,7 +160,9 @@ Tries to read once from input-length to input-max (end of buffer)."
 	   (when (= input-index (input-length stream))
 	     (setf input-index 0
 		   (input-length buffer) 0)
-	     (stream-input stream)))))))
+	     (case (stream-input stream)
+	       ((:eof) (return-from stream-read-sequence :eof))
+	       ((nil) (return-from stream-read-sequence nil)))))))))
 
 (defmethod close ((stream input-stream) &key abort)
   (declare (ignore abort))
@@ -143,6 +179,14 @@ Tries to read once from input-length to input-max (end of buffer)."
        (unwind-protect (let ((,var ,stream))
 			 ,@body)
 	 (close ,stream)))))
+
+(define-condition stream-output-error (stream-error)
+  ()
+  (:report (lambda (condition stream)
+             (format stream "output error on ~S"
+                     (stream-error-stream condition))))
+  (:documentation "An error that is signalled when an output error happens
+on a fd gray stream."))
 
 (defclass output-stream (stream fundamental-binary-output-stream)
   ((output-buffer :initform (cffi:foreign-alloc :unsigned-char
@@ -165,27 +209,40 @@ Tries to read once from input-length to input-max (end of buffer)."
 Calls write with data ranging from output-index to output-length."
   (let ((buffer (output-buffer stream)))
     (with-accessors ((output-index output-index)) stream
-      (loop
-	 (when (= output-index (output-length buffer))
-	   (setf output-index 0
-		 (output-length buffer) 0)
-	   (return))
-	 (let ((r (unistd:write (stream-fd stream)
-				(cffi:mem-aptr buffer :unsigned-char output-index)
-				(- (output-length stream) output-index))))
-	   (incf output-index r))))))
+      (let* ((fd (stream-fd stream))
+	     (buf (cffi:mem-aptr buffer :unsigned-char output-index))
+	     (buflen (- (output-length stream) output-index))
+	     (r (if (stream-blocking stream)
+		    (unistd:write fd buf buflen)
+		    (unistd:write-non-blocking fd buf buflen))))
+	(cond ((null r)
+	       (return-from stream-output nil))
+	      ((= 0 r)
+	       (return-from stream-output :eof))
+	      ((< r 0)
+	       (error 'stream-output-error :stream stream))
+	      (t
+	       (incf output-index r)
+	       (when (= output-index (output-length stream))
+		 (setf output-index 0
+		       (output-length stream) 0))))))))
 
 (defmethod stream-force-output ((stream output-stream))
   (stream-output stream))
 
 (defmethod stream-finish-output ((stream output-stream))
-  (stream-output stream))
+  (loop
+     (when (= 0 (output-length stream))
+       (return))
+     (stream-output stream)))
 
 (defmethod stream-write-byte ((stream output-stream) byte)
   (check-if-open stream)
   (let ((buffer (output-buffer stream)))
     (when (= (output-length stream) (output-max stream))
-      (stream-finish-output stream))
+      (let ((r (stream-output stream)))
+	(cond ((null r)
+	       ))))
     (setf (cffi:mem-aref buffer :unsigned-char (input-length stream)) byte)
     (incf (input-length stream)))
   byte)
